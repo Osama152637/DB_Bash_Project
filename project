@@ -1,0 +1,321 @@
+#!/usr/bin/bash
+dbpass="theData"
+mkdir -p $dbpass
+
+mainMenu(){
+    echo "Main Menu"
+    echo "1- Create Database"
+    echo "2- List Tables"
+    echo "3- Connect To Databases"
+    echo "4- Drop Database"
+    echo "5- exit"
+    read -p "please select a number: " selected
+
+    case $selected in
+    1) createDatabase
+        ;;
+    2) listDatabase
+        ;;
+    3) connectDatabase
+        ;;
+    4) dropDatabase
+        ;;
+    5) exit
+        ;;
+    *) echo "please select a number from the above"; mainMenu
+    esac
+}
+
+createDatabase(){
+    read -p "The Database Name: " dbName
+    if [ -d $dbpass/$dbName ]
+    then
+    echo "The "$dbName" already exist"
+    else
+    mkdir -p $dbpass/$dbName
+    echo "The Database "$dbName" successfully created."
+    mainMenu
+    fi
+    mainMenu
+}
+
+listDatabase(){
+    echo "The Databses: "
+    ls $dbpass
+    mainMenu
+}
+
+tableMenu(){
+    dbName=$1
+    echo "Connected successfully to "$dbName" Database"
+    echo "Database Menu: "
+    echo "1- Create Table"
+    echo "2- List Tables"
+    echo "3- Drop Table"
+    echo "4- Insert into Table"
+    echo "5- Select From Table"
+    echo "6- Delete From Table"
+    echo "7- Update Table"
+    echo "8- Back to Main Menu"
+    read -p "please select a number from the above: " selected
+
+    case $selected in 
+    1)
+        creatTable $dbName
+        ;;
+    2)
+        listTable $dbName
+        ;;
+    3)
+        dropTable $dbName
+        ;;
+    4)
+        insertIntoTable $dbName
+        ;;
+    5)
+        selectFromTable $dbName
+        ;;
+    6)
+        deleteFromTable $dbName
+        ;;
+    7)
+        updateTable $dbName
+        ;;
+    8)
+        mainMenu
+        ;;
+    *)
+        echo "please select a number from the above"; tableMenu $dbName 
+        ;;
+    esac
+}
+
+
+dropTable(){
+    dbName=$1
+    read -p "Type the name of the table you want to drop: " tableName
+    droppedTable="$dbpass/$dbName/$tableName"
+    rm -r $droppedTable
+    echo "Table "$tableName" has been dropped."
+    tableMenu $dbName
+}
+
+insertIntoTable(){
+    dbName=$1
+    read -p "Enter the Table Name: " tableName
+    tableFile="$dbpass/$dbName/$tableName"
+    if [ ! -f $tableFile ]
+    then
+        echo "The table '$tableName' does not exist."
+        tableMenu $dbName
+        return
+    fi
+
+    IFS='|' read -ra headers <<< $(head -n 1 $tableFile)
+    declare -A dataTypes
+    primaryKey=""
+
+    for col in "${headers[@]}"; do
+        IFS=':' read -ra colInfo <<< $col
+        colName="${colInfo[0]}"
+        colType="${colInfo[1]}"
+        dataTypes[$colName]=$colType
+        if [ -z $primaryKey ]; then
+            primaryKey=$colName
+        fi
+    done
+
+    row=""
+    for col in "${headers[@]}"; do
+        IFS=':' read -ra colInfo <<< $col
+        colName="${colInfo[0]}"
+        colType="${colInfo[1]}"
+        read -p "Enter $colName ($colType): " value
+
+        if [ $colName == $primaryKey ]; then
+            if grep -q "^$value|" $tableFile; then
+                echo "Primary key '$value' already exists. Insertion aborted."
+                tableMenu $dbName
+                return
+            fi
+        fi
+
+        if [[ ($colType == "i" && ! $value =~ ^[0-9]+$) || ($colType == "s" && $value =~ ^[0-9]+$) ]]; then
+            echo "Invalid value for $colName ($colType). Insertion aborted."
+            tableMenu $dbName
+            return
+        fi
+
+        if [ -z $row ]; then
+            row=$value
+        else
+            row="$row|$value"
+        fi
+    done
+
+    echo $row >> $tableFile
+    echo "Data inserted into '$tableName' table."
+    tableMenu $dbName
+}
+
+
+updateTable(){
+    dbName=$1
+    read -p "Enter the Table Name: " tableName
+    tableFile="$dbpass/$dbName/$tableName"
+    if [ ! -f $tableFile ]; then
+        echo "Table '$tableName' does not exist."
+        tableMenu $dbName
+        return
+    fi
+
+    read -p "Enter the Primary Key Value of the row to update: " pkValue
+    if ! awk -F'|' -v pk="$pkValue" '$1 == pk' $tableFile > /dev/null; then
+        echo "Primary key '$pkValue' not found."
+        tableMenu $dbName
+        return
+    fi
+
+    IFS='|' read -ra headers <<< $(head -n 1 $tableFile)
+    row=$(awk -F'|' -v pk="$pkValue" '$1 == pk' $tableFile)
+    IFS='|' read -ra rowData <<< "$row"
+
+    declare -A colNames
+    for header in "${headers[@]}"; do
+        IFS=':' read -ra colInfo <<< $header
+        colNames["${colInfo[0]}"]="${colInfo[1]}"
+    done
+
+    updatedRow=""
+    for i in "${!headers[@]}"; do
+        IFS=':' read -ra colInfo <<< "${headers[$i]}"
+        colName="${colInfo[0]}"
+        colType="${colInfo[1]}"
+        currentData="${rowData[$i]}"
+
+        read -p "Enter new value for $colName ($currentData): " newValue
+        if [ -z "$newValue" ]; then
+            newValue="$currentData"
+        elif [ "$newValue" == " " ]; then
+            newValue=""
+        else
+            if [ "$colType" == "i" ] && [[ ! "$newValue" =~ ^[0-9]+$ ]]; then
+                echo "Invalid value for $colName ($colType). Update aborted."
+                tableMenu $dbName
+                return
+            elif [ "$colType" == "s" ] && [[ "$newValue" =~ ^[0-9]+$ ]]; then
+                echo "Invalid value for $colName ($colType). Update aborted."
+                tableMenu $dbName
+                return
+            fi
+        fi
+
+        if [ "$colName" == "$primaryKey" ]; then
+            if [ -z "$newValue" ]; then
+                echo "Primary key cannot be empty. Update aborted."
+                tableMenu $dbName
+                return
+            elif grep -q "^$newValue|" $tableFile && [ "$newValue" != "$pkValue" ]; then
+                echo "Primary key '$newValue' already exists. Update aborted."
+                tableMenu $dbName
+                return
+            fi
+        fi
+
+        if [ -z "$updatedRow" ]; then
+            updatedRow="$newValue"
+        else
+            updatedRow="$updatedRow|$newValue"
+        fi
+    done
+
+    awk -F'|' -v pk="$pkValue" -v newRow="$updatedRow" '$1 == pk {$0=newRow}1' $tableFile > temp && mv temp $tableFile
+    echo "Row with primary key '$pkValue' updated successfully."
+    tableMenu $dbName
+}
+
+selectFromTable(){
+    dbName=$1
+    read -p "Enter the Table Name: " tableName
+    tableFile="$dbpass/$dbName/$tableName"
+    if [ ! -f $tableFile ]; then
+        echo "The table '$tableName' does not exist."
+        tableMenu $dbName
+        return
+    fi
+
+    echo "What would you like to select?"
+    echo "1- Select a Row"
+    echo "2- Select a Column"
+    echo "3- Select All Data"
+    read -p "Please select a number: " option
+
+    case $option in
+        1) 
+            selectRow $dbName $tableName
+            ;;
+        2)
+            selectColumn $dbName $tableName
+            ;;
+        3)
+            selectAllData $dbName $tableName
+            ;;
+        *)
+            echo "Please select a valid option."
+            selectFromTable $dbName
+            ;;
+    esac
+}
+
+selectRow() {
+    dbName=$1
+    tableName=$2
+    tableFile="$dbpass/$dbName/$tableName"
+
+    read -p "Enter the Primary Key Value of the row to select: " pkValue
+    if ! grep -q "^$pkValue|" $tableFile; then
+        echo "Primary key '$pkValue' not found."
+        tableMenu $dbName
+        return
+    fi
+
+    grep "^$pkValue|" $tableFile
+    tableMenu $dbName
+}
+
+selectColumn() {
+    dbName=$1
+    tableName=$2
+    tableFile="$dbpass/$dbName/$tableName"
+
+    read -p "Enter the Column Header Name to select: " colName
+    colIndex=$(head -n 1 $tableFile | awk -F'|' -v col="$colName" '{
+        for (i = 1; i <= NF; i++) {
+            split($i, a, ":")
+            if (a[1] == col) {
+                print i
+                break
+            }
+        }
+    }')
+
+    if [ -z "$colIndex" ]; then
+        echo "Column '$colName' not found."
+        tableMenu $dbName
+        return
+    fi
+
+    awk -F'|' -v col="$colIndex" '{print $col}' $tableFile
+    tableMenu $dbName
+}
+
+selectAllData() {
+    dbName=$1
+    tableName=$2
+    tableFile="$dbpass/$dbName/$tableName"
+
+    cat $tableFile
+    tableMenu $dbName
+}
+
+mainMenu

@@ -44,6 +44,29 @@ listDatabase(){
     ls $dbpass
     mainMenu
 }
+connectDatabase(){
+    read -p "Please Enter your Database Name: " dbName
+    if [ -d $dbpass/$dbName ]
+    then
+        tableMenu $dbName
+    else
+        echo "There is no "$dbName" Database"
+        mainMenu
+    fi
+}
+
+dropDatabase(){
+    read -p "Type the Database Name you don't want: " dbName
+    if [ ! -d $dbpass/$dbName ]
+    then
+    echo "the "$dbName" not exist"
+    mainMenu
+    return
+    fi
+    rm -r $dbpass/$dbName
+    echo $dbName" has been successfully dropped"
+    mainMenu
+}
 
 tableMenu(){
     dbName=$1
@@ -89,7 +112,51 @@ tableMenu(){
         ;;
     esac
 }
+creatTable() {
+    dbName=$1
+    read -p "Please Enter the Table Name: " tableName
+    tableFile="$dbpass/$dbName/$tableName"
+    
+    if [ -f $tableFile ]; then
+        echo "The table '$tableName' already exists."
+        tableMenu $dbName
+        return
+    fi
 
+    touch $tableFile
+    read -p "Primary Key Column Name: " pkName
+    read -p "Primary Key Type (i/s): " pkType
+    declare -A colNames
+    colNames[$pkName]=1
+    tableHeader="$pkName:$pkType"
+    
+    read -p "Please Enter the number of columns: " colNumber
+    
+    for (( i=1; i<=colNumber; i++ )); do
+        read -p "Enter Column $i Name: " colName
+
+        while [[ ${colNames[$colName]} ]]; do
+            echo "Column name '$colName' already exists. Please enter a different name."
+            read -p "Enter Column $i Name: " colName
+        done
+        
+        colNames[$colName]=1
+        read -p "Enter Column $i Type (s/i): " colType
+        
+        tableHeader="$tableHeader|$colName:$colType"
+    done
+
+    echo $tableHeader > $tableFile
+    echo "The Table '$tableName' has been created."
+    tableMenu $dbName
+}
+
+listTable(){
+    dbName=$1
+    echo "Table in database "$dbName" is: "
+    ls $dbpass/$dbName
+    tableMenu $dbName
+}
 
 dropTable(){
     dbName=$1
@@ -317,5 +384,96 @@ selectAllData() {
     cat $tableFile
     tableMenu $dbName
 }
+deleteFromTable(){
+    dbName=$1
+    read -p "Enter the Table Name: " tableName
+    tableFile="$dbpass/$dbName/$tableName"
+    if [ ! -f $tableFile ]; then
+        echo "The table '$tableName' does not exist."
+        tableMenu $dbName
+        return
+    fi
 
+    echo "What would you like to delete?"
+    echo "1- Delete a Row"
+    echo "2- Delete a Column"
+    echo "3- Delete All Data (Except Headers)"
+    read -p "Please select a number: " option
+
+    case $option in
+        1) 
+            deleteRow $dbName $tableName
+            ;;
+        2)
+            deleteColumn $dbName $tableName
+            ;;
+        3)
+            deleteAllDataExceptHeaders $dbName $tableName
+            ;;
+        *)
+            echo "Please select a valid option."
+            deleteFromTable $dbName
+            ;;
+    esac
+}
+
+deleteRow() {
+    dbName=$1
+    tableName=$2
+    tableFile="$dbpass/$dbName/$tableName"
+
+    read -p "Enter the Primary Key Value of the row to delete: " pkValue
+    if ! grep -q "^$pkValue|" $tableFile; then
+        echo "Primary key '$pkValue' not found."
+        tableMenu $dbName
+        return
+    fi
+
+    awk -F'|' -v pk="$pkValue" '$1 != pk' $tableFile > temp && mv temp $tableFile
+    echo "Row with primary key '$pkValue' deleted successfully."
+    tableMenu $dbName
+}
+
+deleteColumn() {
+    dbName=$1
+    tableName=$2
+    tableFile="$dbpass/$dbName/$tableName"
+
+    read -p "Enter the Column Header Name to delete: " colName
+    colIndex=$(head -n 1 $tableFile | awk -F'|' -v col="$colName" '{
+        for (i = 1; i <= NF; i++) {
+            split($i, a, ":")
+            if (a[1] == col) {
+                print i
+                break
+            }
+        }
+    }')
+
+    if [ -z "$colIndex" ]; then
+        echo "Column '$colName' not found."
+        tableMenu $dbName
+        return
+    fi
+
+    awk -F'|' -v col="$colIndex" '{
+        for (i = 1; i <= NF; i++) {
+            if (i != col) {
+                printf $i (i == NF ? "\n" : "|")
+            }
+        }
+    }' $tableFile > temp && mv temp $tableFile
+    echo "Column '$colName' deleted successfully."
+    tableMenu $dbName
+}
+
+deleteAllDataExceptHeaders() {
+    dbName=$1
+    tableName=$2
+    tableFile="$dbpass/$dbName/$tableName"
+
+    head -n 1 $tableFile > temp && mv temp $tableFile
+    echo "All data except headers deleted successfully."
+    tableMenu $dbName
+}
 mainMenu
